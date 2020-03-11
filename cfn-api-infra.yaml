@@ -1,0 +1,31 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Creates the architecure for API
+
+Parameters:
+  Project:
+    Type: String
+    Default: 'API'
+
+  Environment:
+    Type: String
+    AllowedValues: ['dev', 'staging', 'prod', 'test']
+
+  TemplateStackName:
+    Type: String
+    Description: Stack name with Bucket information models.
+
+Resources:
+  SAM:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL:
+        Fn::Join:
+          - ''
+          - - Fn::ImportValue: !Sub '${TemplateStackName}-templateurl'
+            - 'API/cfn-sam.yaml'
+      Parameters:
+        Project: !Ref Project
+        Environment: !Ref Environment

@@ -1,0 +1,55 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Create new infrastructure to mid qi tech
+
+Parameters:
+  Project:
+    Type: String
+    Default: 'API'
+
+  Environment:
+    Type: String
+    AllowedValues: ['dev', 'staging', 'prod', 'test']
+
+  TemplateStackName:
+    Type: String
+    Description: Stack name with Bucket information models.
+
+  RepositoryName:
+    Type: String
+    Description: Github repository name
+
+  GithubSecret:
+    Type: String
+    NoEcho: true
+    Description: Github access token https://github.com/settings/tokens
+
+Mappings:
+  Config:
+    test:
+      Branch: 'test'
+    dev:
+      Branch: 'develop'
+    staging:
+      Branch: 'staging'
+    prod:
+      Branch: 'master'
+
+Resources:
+  Deploy:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL:
+        Fn::Join:
+          - ''
+          - - Fn::ImportValue: !Sub '${TemplateStackName}-templateurl'
+            - 'API/cfn-deploy.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        Project: !Ref Project
+        BranchName: !FindInMap [Config, !Ref Environment, Branch]
+        GithubOwner: pontte
+        RepositoryName: !Ref RepositoryName
+        GithubSecret: !Ref GithubSecret
