@@ -1,0 +1,252 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Deploy model to API
+
+Parameters:
+  Project:
+    Type: String
+
+  Environment:
+    Type: String
+
+  GithubOwner:
+    Type: String
+
+  GithubSecret:
+    Type: String
+    NoEcho: true
+
+  RepositoryName:
+    Type: String
+
+  BranchName:
+    Type: String
+
+Resources:
+  ArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - { Key: Project, Value: !Ref Project }
+        - { Key: Environment, Value: !Ref Environment }
+
+  CacheStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - { Key: Project, Value: !Ref Project }
+        - { Key: Environment, Value: !Ref Environment }
+
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub '${ArtifactStore.Arn}/*'
+                  - !Sub '${CacheStore.Arn}/*'
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: !Sub 'Build para o ${AWS::StackName}-${Environment}'
+      Tags:
+        - { Key: Project, Value: !Ref Project }
+        - { Key: Environment, Value: !Ref Environment }
+      Artifacts:
+        Type: CODEPIPELINE
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+        EnvironmentVariables:
+          - Name: BUILD_OUTPUT_BUCKET
+            Value: !Ref ArtifactStore
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+      Source:
+        Type: CODEPIPELINE
+      Cache:
+        Type: S3
+        Location: !Ref CacheStore
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          Action: 'sts:AssumeRole'
+          Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  PipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: PipelineDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub '${ArtifactStore.Arn}/*'
+                  - !Sub '${ArtifactStore.Arn}'
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource:
+                  - !GetAtt CodeBuildProject.Arn
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                  - iam:PassRole
+                Resource: '*'
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub 'API-${BranchName}'
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactStore
+      RoleArn: !GetAtt PipelineServiceRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: ApplicationSource
+              ActionTypeId:
+                Owner: ThirdParty
+                Category: Source
+                Provider: GitHub
+                Version: 1
+              Configuration:
+                Owner: !Ref GithubOwner
+                Repo: !Ref RepositoryName
+                OAuthToken: !Ref GithubSecret
+                Branch: !Ref BranchName
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: !Sub '${AWS::StackName}-${Environment}-SourceArtifact'
+              RunOrder: 1
+
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Owner: AWS
+                Category: Build
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: !Sub '${AWS::StackName}-${Environment}-SourceArtifact'
+              OutputArtifacts:
+                - Name: !Sub '${AWS::StackName}-${Environment}-BuildArtifact'
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Owner: AWS
+                Category: Deploy
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+                StackName: !Sub 'API-${Environment}'
+                ChangeSetName: !Sub 'API-ChangeSet-${BranchName}'
+                TemplatePath: !Sub '${AWS::StackName}-${Environment}-BuildArtifact::serverless-output.yaml'
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                TemplateConfiguration: !Sub '${AWS::StackName}-${Environment}-BuildArtifact::configuration.json'
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "${Environment}"
+                  }
+              InputArtifacts:
+                - Name: !Sub '${AWS::StackName}-${Environment}-BuildArtifact'
+              RunOrder: 1
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Owner: AWS
+                Category: Deploy
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+                StackName: !Sub 'API-${Environment}'
+                ChangeSetName: !Sub 'API-ChangeSet-${BranchName}'
+              RunOrder: 2
+
+  PipelineWebhook:
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: !Ref GithubSecret
+      Filters:
+        - JsonPath: $.ref
+          MatchEquals: 'refs/heads/{Branch}'
+      TargetPipeline: !Ref Pipeline
+      TargetAction: ApplicationSource
+      Name: !Sub '${AWS::StackName}-${Environment}-PipelineWebhook'
+      TargetPipelineVersion: !GetAtt Pipeline.Version
+      RegisterWithThirdParty: true

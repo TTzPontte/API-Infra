@@ -1,0 +1,34 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Create new infrastructure for API
+
+Parameters:
+  Project:
+    Type: String
+    Default: "API"
+
+  Environment:
+    Type: String
+    AllowedValues: ["dev", "staging", "prod", "test"]
+
+Resources:
+  TemplateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - { Key: "Project", Value: !Ref Project }
+        - { Key: "Environment", Value: !Ref Environment }
+
+Outputs:
+  TemplateName:
+    Description: Base names with models to deploy
+    Value: !Ref TemplateBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-name
+  TemplateUrl:
+    Description: Base Url with models to deploy
+    Value: !Sub "https://s3.amazonaws.com/${TemplateBucket}/"
+    Export:
+      Name: !Sub ${AWS::StackName}-templateurl

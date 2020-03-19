@@ -1,0 +1,27 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Creates the resources to be enable the deployment of SAM.
+
+Parameters:
+  Project:
+    Type: String
+
+  Environment:
+    Type: String
+
+Resources:
+  SAMDeployBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - { Key: "Project", Value: !Ref Project }
+        - { Key: "Environment", Value: !Ref Environment }
+
+Outputs:
+  SAMDeployBucketName:
+    Description: Bucket name that will be used by SAM to make the deployment.
+    Value: !Ref SAMDeployBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-sam-deploy-bucket-name
