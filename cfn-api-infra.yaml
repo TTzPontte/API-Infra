@@ -11,7 +11,7 @@ Parameters:
 
   Environment:
     Type: String
-    AllowedValues: ['dev', 'staging', 'prod', 'test']
+    AllowedValues: ['dev', 'staging', 'prod', 'test', 'refactoring']
 
   TemplateStackName:
     Type: String
